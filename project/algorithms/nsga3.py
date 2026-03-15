@@ -56,7 +56,7 @@ def run_nsga3():
         ind.fitness.values = fit
         
     for gen in range(NSGA3_GEN):
-        offspring = algorithms.varAnd(pop, toolbox, cxpb=0.9, mutpb=0.1)
+        offspring = algorithms.varAnd(pop, toolbox, cxpb=NSGA3_CXPB, mutpb=NSGA3_MUTPB)
         for ind, fit in zip(offspring, map(toolbox.evaluate, offspring)):
             ind.fitness.values = fit
         pop = toolbox.select(pop + offspring, k=NSGA3_POP)
@@ -64,5 +64,5 @@ def run_nsga3():
     res = []
     for ind in pop:
         f = ind.fitness.values
-        res.append((f[0], -f[1], -f[2]))
+        res.append((f[0], f[1], -f[2]))
     return res, pop

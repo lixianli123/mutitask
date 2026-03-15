@@ -8,9 +8,7 @@ def run_nsga2():
     # 1. 设置 DEAP 环境
     # 如果已存在则不重复创建
     if not hasattr(creator, "FitnessMulti"):
-        # 权重: Cost(min)=-1, Safety(max)=+1, Structural(max)=+1
-        # 但在 evaluate 函数中我们返回的是 (-M, -S)，所以这里统一设为最小化 (-1, -1, -1)
-        # 修正: evaluate 返回 (c, -m, -s)。我们希望最小化 c, 最小化 -m, 最小化 -s。
+        # 权重统一最小化: evaluate 返回 (c, m, -s)
         creator.create("FitnessMulti", base.Fitness, weights=(-1.0, -1.0, -1.0))
         creator.create("Individual", list, fitness=creator.FitnessMulti)
     
@@ -91,9 +89,9 @@ def run_nsga2():
     # 5. 提取结果
     res = []
     for ind in pop:
-        # fitness 是 (c, -m, -s)
+        # fitness 是 (c, m, -s)
         f = ind.fitness.values
         # 还原为 (c, m, s)
-        res.append((f[0], -f[1], -f[2]))
+        res.append((f[0], f[1], -f[2]))
         
     return res, pop
