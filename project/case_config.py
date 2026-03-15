@@ -72,6 +72,8 @@ NSGA2_MUTPB = 0.3
 NSGA3_POP = 400     # 需为4的倍数以适应参考点
 NSGA3_GEN = 400
 NSGA3_P = 4         # 参考点参数 (生成15个参考点)
+NSGA3_CXPB = 0.7    # 论文 Table 3 规定的 NSGA-III 交叉率
+NSGA3_MUTPB = 0.3   # 论文 Table 3 规定的 NSGA-III 变异率
 
 # GDE3
 GDE3_POP = 500

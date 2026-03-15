@@ -102,11 +102,10 @@ def calculate_objectives(x_continuous):
     但在本函数中返回原始物理值。
     """
     params = decode_variables(x_continuous)
-    
-    # 提取变量
+
     geo_params = params[:12]
     sec = SectionProperties(geo_params)
-    
+
     fc = params[12]
     fy = params[13]
     dr = params[14]
@@ -115,74 +114,79 @@ def calculate_objectives(x_continuous):
     npw = params[17]
     sigma = params[18]
     hp_ratio = params[19]
-    
-    # --- 1. Cost C(X) (最小化) ---
-    # 单价系数
-    # cc = 3fc' + 255
+
+    # 【缺少条件补充1】：论文公式(12)需要普通钢筋间距 sr，但全文未给出。此处假设为 0.15m (150mm)
+    sr_assumed = 0.15
+
+    # 计算腹板倾角 theta (根据 p = 1/tan(theta-pi/2) 反推)
+    theta = np.arctan(sec.p_slope) + np.pi / 2.0
+
+    # 论文 Eq(11): 混凝土密度
+    rho_c = fc + 2320
+
+    # 论文 Eq(12): 单节段普通钢筋总长度 lr
+    lr = (sec.ltop + sec.lbot + (4 * sec.h) / np.sin(np.pi - theta)) * (2 * sec.l_seg / sr_assumed)
+
+    # 论文 Eq(13): 普通钢筋质量 mr
+    rho_r = 6170 * (dr / 1000.0)
+    n_segments = L_SPAN / sec.l_seg
+    mr = n_segments * lr * rho_r
+
+    # 论文 Eq(14): 预应力钢筋质量 mp
+    rho_p = 6170 * (dp / 1000.0)
+    mp = (npb + npw) * L_SPAN * rho_p
+
+    # 论文 Eq(9): 修正倒角面积和截面总面积 A
+    A_chamfers = sec.x1 * sec.y1 + sec.x2 * sec.y1 + sec.x3 * sec.y2
+    A = sec.ltop * sec.ttop + sec.lbot * sec.tbot + 2 * sec.tw * (sec.h - sec.ttop - sec.tbot) / np.sin(np.pi - theta) + A_chamfers
+
+    # 论文 Eq(10): 扣除普通钢筋后的混凝土面积 Ac
+    Ac = A - 0.25 * np.pi * (dr / 1000.0) ** 2 * (lr / (2 * sec.l_seg))
+    sec.Ac = Ac
+
+    # 论文 Eq(15): 成本 C
     cc = 3 * fc + 255
-    cr = (fy * 0.1 + 15) / 11
-    cp = (fy * 0.1 + 15) / 11
-    
-    # 质量计算
-    # mr: 普通钢筋质量
-    # 假设 Ar = Ac * 0.015 (1.5% 配筋率，因变量 p 现为斜率比，缺少配筋率变量)
-    # nr 未定义，使用 Ar 代替
-    rho_s_assumed = 0.015 
-    Ar = sec.Ac * rho_s_assumed
-    
-    # mr = n * lr * rho_r (这里 rho_r = STEEL_DENSITY)
-    # 假设 lr = L_SPAN (全长), n * lr ~ Ar * L_SPAN
-    mr = STEEL_DENSITY * Ar * L_SPAN
-    
-    # mp: 预应力钢筋质量
-    # Ap = (npb+npw) * pi * dp^2 / 4
-    # dp 单位 mm -> m
-    area_p_strand = np.pi * (dp/1000.0)**2 / 4 
-    total_strands = npb + npw
-    Ap = total_strands * area_p_strand
-    # mp = (npb+npw) * L * rho_p (rho_p = STEEL_DENSITY)
-    mp = STEEL_DENSITY * Ap * L_SPAN
-    
-    Cost = L_SPAN * sec.Ac * cc + mr * cr + mp * cp
-    
-    # --- 2. Safety M(X) (最大化) ---
-    # 混凝土质量 mc = rho_c * Ac * L
-    mc = DENSITY_CONCRETE * sec.Ac * L_SPAN
-    m_total = mc + mr + mp
-    
-    # 极限弯矩 Mu = m * g * L
-    Mu = m_total * G * L_SPAN 
-    
-    # 有效高度 h0 = h - ttop
-    h0 = params[2] - sec.ttop
-    # 预应力高度 hp = (hp/h) * h
-    hp_val = hp_ratio * params[2]
-    
-    # 预应力弯矩 Mp
-    # Mp = 0.25 * pi * dp^2 * sigma * (npb * h0 + npw * (h0 - hp))
-    # dp 单位 mm -> m, sigma 单位 MPa -> Pa
-    term_p = 0.25 * np.pi * (dp/1000.0)**2 * (sigma * 1e6)
+    cr = (fy * 0.1 + 15) / 11.0
+    cp = (fy * 0.1 + 15) / 11.0
+    Cost = L_SPAN * Ac * cc + mr * cr + mp * cp
+
+    # 论文 Eq(20): 形心高度 h0
+    numerator = sec.ltop * (sec.h ** 2 - (sec.h - sec.ttop) ** 2) + sec.lbot * sec.tbot ** 2 + 2 * sec.tw * ((sec.h - sec.ttop) ** 2 - sec.tbot ** 2)
+    denominator = 2 * (Ac - A_chamfers) * np.sin(np.pi - theta)
+    h0 = numerator / (denominator + 1e-12)
+
+    # 论文 Eq(16, 17, 18): 极限弯矩 Mu 与 目标弯矩 M
+    mc = rho_c * Ac * L_SPAN
+    Mu = (mc + mr + mp) * G * L_SPAN
+    hp_val = hp_ratio * sec.h
+
+    term_p = 0.25 * np.pi * (dp / 1000.0) ** 2 * (sigma * 1e6)
     Mp = term_p * (npb * h0 + npw * (h0 - hp_val))
-    
+
     alpha = 0.514
-    # 安全目标 M = alpha * Mu - Mp (必须最大化)
     M_val = alpha * Mu - Mp
-    
-    # --- 3. Structural Performance S(X) (最大化) ---
-    # 混凝土模量 Ec (Pa)
-    # Ec = (-4.375 * fc'^2 + 612.5 * fc' + 15000) * 1e6
-    Ec = (-4.375 * fc**2 + 612.5 * fc + 15000) * 1e6
-    
-    # 等效模量 E = (EcAc + ErAr * lr / (2l_seg)) / (Ac+Ar)
-    # 注意：这里 l_seg 是 x[0] (节段长度)
-    Er = 2.0e11 # 钢筋模量
-    lr = L_SPAN # 假设钢筋长度为跨长
-    l_seg = sec.l_seg + 1e-6 # 防止除零错误 (若算法边界设置不当导致 l_seg -> 0)
-    
-    E_val = (Ec * sec.Ac + Er * Ar * lr / (2 * l_seg)) / (sec.Ac + Ar + 1e-6)
-    
-    # 刚度 S = alpha_s * E * Iz
-    alpha_s = 0.95 # 刚度折减系数
-    S_val = alpha_s * E_val * sec.Iz
-    
+
+    # 论文 Eq(19, 21, 22): 刚度 S
+    Ec = (-4.375 * fc ** 2 + 612.5 * fc + 15000) * 1e6
+    Er = 2.0e11
+
+    # 论文 Eq(19): 等效弹性模量 E (Ar 为单根钢筋面积)
+    Ar_single = 0.25 * np.pi * (dr / 1000.0) ** 2
+    E_val = (Ec * Ac + Er * Ar_single * (lr / (2 * sec.l_seg))) / (A + 1e-12)
+
+    # 论文 Eq(21): 基于精确形心高度 h0 的惯性矩 Iz
+    I_top = (sec.ltop * sec.ttop ** 3) / 12.0 + sec.ltop * sec.ttop * (sec.h - h0 - 0.5 * sec.ttop) ** 2
+    I_bot = (sec.lbot * sec.tbot ** 3) / 12.0 + sec.lbot * sec.tbot * (h0 - 0.5 * sec.tbot) ** 2
+
+    h_web_actual = sec.h - sec.ttop - sec.tbot
+    sin_val = np.sin(np.pi - theta)
+    I_web = (1.0 / 12.0) * (2 * sec.tw / sin_val) * (h_web_actual ** 3) + \
+        (2 * sec.tw / sin_val) * h_web_actual * (h0 - 0.5 * (sec.h - sec.ttop + sec.tbot)) ** 2
+
+    Iz = I_top + I_bot + I_web
+
+    # 论文 Eq(22): 刚度 S
+    alpha_s = 0.95
+    S_val = alpha_s * E_val * Iz
+
     return Cost, M_val, S_val
